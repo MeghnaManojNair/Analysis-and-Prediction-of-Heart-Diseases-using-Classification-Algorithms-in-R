@@ -1,0 +1,370 @@
+---
+title: "Project- J comp"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Dataset Used
+* * *
+
+slope (type: int) - the slope of the peak exercise ST segment, an electrocardiography read out indicating quality of blood flow to the heart 
+-- Value 1: upsloping
+-- Value 2: flat
+-- Value 3: downsloping
+
+thal (type: categorical) - results of thallium stress test measuring blood flow to the heart, with possible
+-- 1: normal
+-- 2: fixed defect
+-- 3: reversable defect
+
+trestbps (type: int) - resting blood pressure
+
+cp (type: int): chest pain type (4 values) 
+-- Value 1: typical angina 
+-- Value 2: atypical angina
+-- Value 3: non-anginal pain  
+-- Value 4: asymptomatic
+
+
+fbs (type: binary) - fasting blood sugar > 120 mg/dl
+
+restecg (type: int) - resting electrocardiographic results (values 0,1,2)
+
+oldpeak (type: float) - oldpeak = ST depression induced by exercise relative to rest, a measure of abnormality in electrocardiograms
+
+sex (type: binary) - 0: female, 1: male
+
+age (type: int) - age in years
+
+exang: exercise_induced_angina (type: binary) - exercise-induced chest pain (0: False, 1: True)
+
+chol (type: int) - serum cholestoral in mg/dl
+
+thalach (type: int) - maximum heart rate achieved
+
+ca (type: categorical) - number of major vessels (0-3) colored by flourosopy
+
+target (type: categorical) - diagnosis of heart disease (angiographic disease status)
+-- Value 0: < 50% diameter narrowing
+-- Value 1: > 50% diameter narrowing
+
+* * *
+
+```{r}
+library(tidyverse)
+library(dslabs)
+library(dplyr)
+library(caret)
+library(lubridate)
+library(tidytext)
+#library("RColorBrewer")
+library(randomForest)
+library(tictoc)
+library(e1071)
+library(ggpubr)
+```
+
+
+## Loading the dataset
+```{r}
+rm(list=ls())
+library(tidyverse)
+heart <- read.csv("heart.csv")
+View(heart)
+any(is.na(heart))
+str(heart)
+head(heart)
+tail(heart)
+summary(heart)
+```
+
+## Converting the values 0 and 1 values in sex to female and male respectively
+```{r}
+heart <- heart%>%
+  mutate(sex=gsub("0","Female",sex))%>%
+  mutate(sex=gsub("1","Male",sex))
+head(heart$sex)
+```
+
+## Checking the count of males and females prone to heart disease
+```{r}
+library(dplyr)
+heart%>%
+  filter(target==1)%>%
+  group_by(sex)%>%
+  summarize(No.of_people_prone_to_heart_disease=sum(target))
+```
+
+## Average cholestrol level of the people prone to heart disease
+```{r}
+heart%>%
+  filter(target==1)%>%
+  summarize(Avg.cholestrol=mean(chol))
+```
+
+## Relation between chest pain type and target
+```{r}
+library(crosstable)
+source("http://pcwww.liv.ac.uk/~william/R/crosstab.r")
+crosstab(heart,row.vars= "cp",col.vars = "target")
+```
+
+## Relation between Sex and Target
+```{r}
+crosstab(heart,row.vars = "sex",col.vars = "target")
+```
+
+
+
+```{r}
+ncol(heart)
+nrow(heart)
+colnames(heart)
+```
+
+## Data Transformation
+```{r}
+
+data2 <- heart%>%
+  mutate(fbs=if_else(fbs==1,">120","<=120"),
+         exang=if_else(exang==1,"YES","NO"),
+         cp=if_else(cp==1,"ATYPICAL ANGINA",
+                    if_else(cp==2,"NON-ANGINAL PAIN","ASYMPTOMATIC")),
+         restecg=if_else(restecg==0,"NORMAL",
+                         if_else(restecg==1,"ABNORMALITY","PROBABLE OR DEFINITE")),
+         slope=as.factor(slope),
+         ca=as.factor(ca),
+         thal=as.factor(thal),
+         target=if_else(target==1,"YES","NO"))%>%
+         mutate_if(is.character,as.factor)%>%
+         dplyr::select(target,sex,fbs,exang,cp,restecg,slope,ca,thal,everything())
+         
+View(data2)
+```
+
+## Data Visualization
+```{r}
+
+library(ggplot2)
+ggplot(data2,aes(x=target,fill=target))+
+  geom_bar()+
+  xlab("Heart Disease")+
+  ylab("count")+
+  ggtitle("Presence and Absence of Heart Disease")+
+  scale_fill_discrete(name='Heart Disease',labels=c("No","Yes"))
+```
+* * *
+
+Inference: It can be observed from the above graph that from the given dataset, more people are prone towards having a pathological disease and fewer number of patients are likely to escape from the same.
+
+* * *
+
+```{r}
+prop.table(table(data2$target))
+#count the frequency of the values of age
+data2%>%
+  group_by(ï..age)%>%
+  count()%>%
+  filter(n>10)%>%
+  ggplot()+
+  geom_col(aes(ï..age,n),fill='maroon')+
+  ggtitle("Age Analysis")+
+  xlab("Age")+
+  ylab("Count")
+
+
+```
+* * *
+
+Inference: From this visualization it can be observed that majority of the people who have been considered in the dataset belong to the age group of 50 to 60.
+
+* * *
+## Compare BP across chest pain
+```{r}
+
+data2%>%
+  ggplot(aes(x=sex,y=trestbps))+
+  geom_boxplot(fill='purple')+
+  xlab('sex')+
+  ylab('BP')+
+  facet_grid(~cp)
+
+```
+
+* * *
+
+Inference: The above given facet_wrapped box plot gives the various central dispersion techniques for the three types of chest pains with regards to blood pressure for both males and females. For asymptomatic chest pain, females are likely to have a higher BP when compared to male and the same can be observed for atypical angina chest pain also. However, in the non-anginal chest pain, males are likely to have a higher BP when compared to females. 
+
+* * *
+
+
+## Comparing cholestrol across chest pain
+```{r}
+data2%>%
+  ggplot(aes(x=sex,y=chol))+
+  geom_boxplot(fill='maroon')+
+  xlab('sex')+
+  ylab('Cholestrol')+
+  facet_grid(~cp)
+```
+* * *
+
+Inference: The above given facet_wrapped box plot gives the various central dispersion techniques for the three types of chest pains with regards to cholestrol for both males and females. For asymptomatic, atypical angina and non-anginal chest pain, females are likely to have a higher cholestrol level when compared to their male counterparts.
+
+* * *
+
+## Correlation Plot
+```{r}
+
+library(corrplot)
+corheart <- cor(data2[,10:14])
+corheart
+corrplot(corheart,method='square',type='upper')
+```
+
+* * *
+
+Inference: In the above correlation plot, a dark red would indicate a negative correlation and a dark blue would indicate a positive correlation. The darker the shade, strong the correlation and lighter the shade, weaker the correlation. It can be inferred from above that thalach (maximum heart rate achieved) is strongly dependent on the age in a negative fashion. Whereas, trestbps (resting blood pressure), chol (cholestrol) and oldpeak are positively correlated in a mediocre way. Another significant inference is that thalach (maximum heart rate achieved) is strongly dependent on oldpeak in a negative manner.
+
+* * *
+
+## Disease Prediction
+```{r}
+set.seed(2020, sample.kind = "Rounding")
+# Divide into train and validation dataset
+test_index <- createDataPartition(y = heart$target, times = 1, p = 0.2, list= FALSE)
+train_set <- heart[-test_index, ]
+validation <- heart[test_index, ]
+
+# Converting the dependent variables to factors
+train_set$target <- as.factor(train_set$target)
+validation$target <- as.factor(validation$target)
+```
+
+## LDA
+```{r}
+lda_fit <- train(target ~ ., method = "lda", data = train_set)
+lda_predict <- predict(lda_fit, validation)
+confusionMatrix(lda_predict, validation$target)
+```
+***
+Inference:
+Using QDA, the accuracy is 0.8689 which is pretty good and the specificity and sensitivity values are 0.9062 and 0.8276 which means the true negative and true positive rates are good enough.
+
+***
+
+## QDA
+```{r}
+qda_fit <- train(target ~ ., method = "qda", data = train_set)
+qda_predict <- predict(qda_fit, validation)
+confusionMatrix(qda_predict, validation$target)
+```
+
+*** 
+Inference:
+Using QDA, the accuracy is 0.8689 which is pretty good and the specificity and sensitivity values are 0.9062 and 0.8276 which means the true negative and true positive rates are good enough.
+
+***
+## KNN Classifier
+```{r}
+ctrl <- trainControl(method = "cv", verboseIter = FALSE, number = 5)
+knnFit <- train(target ~ ., 
+                data = train_set, method = "knn", preProcess = c("center","scale"),
+                trControl = ctrl , tuneGrid = expand.grid(k = seq(1, 20, 2)))
+
+plot(knnFit)
+toc()
+
+knnPredict <- predict(knnFit,newdata = validation )
+knn_results <- confusionMatrix(knnPredict, validation$target )
+
+knn_results
+```
+
+***
+Inference:
+Using KNN, the accuracy is 0.8361 which is pretty good and the specificity and sensitivity values are 0.8750 and 0.7931 which means the true negative and true positive rates are good enough.
+
+***
+## SVM 
+
+```{r}
+ctrl <- trainControl(method = "cv", verboseIter = FALSE, number = 5)
+
+grid_svm <- expand.grid(C = c(0.01, 0.1, 1, 10, 20))
+
+tic(msg= " Total time for SVM :: ")
+svm_fit <- train(target ~ .,data = train_set,
+                 method = "svmLinear", preProcess = c("center","scale"),
+                 tuneGrid = grid_svm, trControl = ctrl)
+
+plot(svm_fit)
+toc()
+svm_predict <- predict(svm_fit, newdata = validation)
+svm_results <- confusionMatrix(svm_predict, validation$target)
+
+svm_results
+```
+
+***
+Inference:
+Using SVM, the accuracy is 0.8361 which is pretty good and the specificity and sensitivity values are 0.9375 and 0.7241 which means the true negative and true positive rates are good enough.
+
+***
+## Random Forest
+```{r}
+urlPackage <- "https://cran.r-project.org/src/contrib/Archive/randomForest/randomForest_4.6-12.tar.gz"
+control<- trainControl(method = "cv", number = 5, verboseIter = FALSE)
+grid <-data.frame(mtry = seq(1, 10, 2))
+tic(msg= " Total time for rf :: ")
+rf_fit <- train(target ~ ., method = "rf", data = train_set, ntree = 20, trControl = control,
+                  tuneGrid = grid)
+
+plot(rf_fit)
+toc()
+rf_predict <- predict(rf_fit, newdata = validation)
+
+rf_results <- confusionMatrix(rf_predict, validation$target)
+
+rf_results
+```
+
+***
+Inference:
+Using RandomForest, the accuracy is 0.7869 which is pretty good and the specificity and sensitivity values are 0.8438 and 0.7241 which means the true negative and true positive rates are good enough.
+
+***
+## GBM
+```{r}
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 10, 25, 30),
+                        n.trees = c(5, 10, 25, 50),
+                        shrinkage = c(0.1, 0.2, 0.3,  0.4, 0.5),
+                        n.minobsinnode = 20)
+
+tic(msg= " Total time for GBM :: ")
+gbm_fit <- train(target ~ ., method = "gbm", data = train_set,  trControl = control, verbose = FALSE,
+                   tuneGrid = gbmGrid)
+
+plot(gbm_fit)
+toc()
+gbm_predict <- predict(gbm_fit, newdata = validation)
+
+gbm_results <- confusionMatrix(gbm_predict, validation$target)
+
+gbm_results
+```
+
+
+***
+Inference:
+Using GBM, the accuracy is 0.8033 which is pretty good and the specificity and sensitivity values are 0.8438 and 0.7586 which means the true negative and true positive rates are good enough.
+
+***
+
+
+
+
+
